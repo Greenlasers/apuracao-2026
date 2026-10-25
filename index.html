@@ -169,6 +169,17 @@ body.lead-lula .cd,body.lead-flavio .cd{border-color:var(--acc);background:linea
 body.lead-lula .cd .clock,body.lead-flavio .cd .clock{color:var(--acc2)}
 .cd .txt{flex:1 1 16rem;font-size:.92rem;color:var(--muted)}
 .cd .txt strong{display:block;color:var(--ink);font-size:1rem}
+.flow h3{font-size:1rem;margin:0 0 .25rem}
+.flow .sum{font-size:.92rem;color:var(--muted);margin:0 0 .75rem}
+.flow .sum b{color:var(--ink)}
+.flow table{width:100%;border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums}
+.flow th,.flow td{padding:.4rem .5rem;border-top:1px solid var(--line);text-align:right;white-space:nowrap}
+.flow th:first-child,.flow td:first-child{text-align:left}
+.flow thead th{color:var(--muted);font-weight:400;border-top:0}
+.flow .sh{display:inline-block;height:.45rem;border-radius:.2rem;vertical-align:middle;margin-right:.35rem;transition:width .6s}
+.flow details{margin-top:.9rem;font-size:.88rem}
+.flow details li{margin:.3rem 0;color:var(--muted)}
+.flow details li b{color:var(--ink)}
 #uf-detail{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line)}
 #uf-detail[hidden]{display:none}
 .table-wrap{overflow-x:auto;margin-top:1.5rem}
@@ -285,6 +296,11 @@ footer a{color:inherit}
       <div id="uf-detail" hidden aria-live="polite"></div>
     </section>
   </div>
+
+  <section class="card trend flow" aria-labelledby="h-flow">
+    <h2 id="h-flow">De onde vieram os votos novos</h2>
+    <div id="flow"><p class="sum">Aparece a partir da 2ª atualização: o painel compara cada leitura do TSE com a anterior, estado por estado.</p></div>
+  </section>
 
   <section class="card trend" aria-labelledby="h-trend">
     <h2 id="h-trend">Tendência e cenários</h2>
@@ -405,7 +421,8 @@ footer a{color:inherit}
       setConn(errMsg ? "warn" : "ok", (errMsg ? "Parcial · " : "") + "Dados do TSE de " + (state.br.when || "–"));
       $("live").textContent = `Atualizado. ${fPct(state.br.pst)} das urnas apuradas.`;
     }
-    render(); renderTrend(); renderDerby();
+    trackFlow();
+    render(); renderTrend(); renderDerby(); renderFlow();
     if (state.sel) loadMunRes(state.sel);
     schedule();
   }
@@ -715,6 +732,55 @@ footer a{color:inherit}
     $("cd-p").textContent = at >= 99.995
       ? "Com a margem atual, só se define no fim da apuração. Disputa apertada."
       : `Se a margem de ${fPct(100 * m).replace("%", " pts")} se mantiver, define com ${fPct(at)} das urnas apuradas (agora: ${fPct(P.pst)}).`;
+  }
+
+  // ---- Votos novos por atualização: diferença entre a leitura atual e a anterior de cada UF ----
+  const FKEY = "apur-2t-6258-flow";
+  let flow = { snap:null, log:[] }; try { flow = JSON.parse(localStorage.getItem(FKEY)) || flow; } catch {}
+  function snapNow(){
+    const o = {};
+    UFS.forEach(uf => { const d = ufData(uf); if (d) o[uf] = { p: d.pst, v: Object.fromEntries(d.cands.slice(0,2).map(c => [c.n, c.v])) }; });
+    return o;
+  }
+  function trackFlow(){
+    const br = state.br && state.br !== "wait" ? state.br : null; if (!br) return;
+    const now = snapNow(), old = flow.snap, ids = br.cands.slice(0,2).map(c => c.n);
+    if (old){
+      const rows = [];
+      UFS.forEach(uf => {
+        const a = now[uf], b = old[uf] || { p:0, v:{} }; if (!a) return;
+        const dv = Object.fromEntries(ids.map(n => [n, (a.v[n] || 0) - (b.v[n] || 0)]));
+        const tot = ids.reduce((s,n) => s + dv[n], 0);
+        if (tot > 0) rows.push({ uf, dp: a.p - b.p, dv, tot });
+      });
+      if (rows.length){
+        rows.sort((x,y) => y.tot - x.tot);
+        flow.log.unshift({ when: br.when, pst: br.pst, ids, rows });
+        flow.log = flow.log.slice(0, 30);
+      }
+    }
+    flow.snap = now;
+    try { localStorage.setItem(FKEY, JSON.stringify(flow)); } catch {}
+  }
+  function renderFlow(){
+    const E = flow.log[0]; if (!E) return;
+    const br = state.br && state.br !== "wait" ? state.br : null;
+    const nm = n => (br?.cands.find(c => c.n === n)?.nm || n).split(" ")[0];
+    const [a, b] = E.ids, sum = n => E.rows.reduce((s,r) => s + r.dv[n], 0), tot = sum(a) + sum(b), net = sum(a) - sum(b);
+    const win = net >= 0 ? a : b, max = Math.max(...E.rows.map(r => r.tot));
+    const sgn = v => (v > 0 ? "+" : v < 0 ? "−" : "") + fInt(Math.abs(v));
+    const line = e => { const s = e.rows.reduce((t,r) => t + r.dv[e.ids[0]] - r.dv[e.ids[1]], 0), w = s >= 0 ? e.ids[0] : e.ids[1];
+      return `<li><b>${esc(e.when.split(" ")[1] || e.when)}</b> · +${fInt(e.rows.reduce((t,r) => t + r.tot, 0))} votos · saldo <b style="color:${colorOf(w)}">${esc(nm(w))} +${fInt(Math.abs(s))}</b> · mais de ${e.rows.slice(0,3).map(r => r.uf.toUpperCase()).join(", ")}</li>`; };
+    $("flow").innerHTML = `<h3>Atualização de ${esc(E.when)}</h3>
+      <p class="sum"><b>+${fInt(tot)}</b> votos válidos novos de <b>${E.rows.length}</b> ${E.rows.length === 1 ? "estado" : "estados"}:
+        ${esc(nm(a))} +${fInt(sum(a))}, ${esc(nm(b))} +${fInt(sum(b))}. Saldo do lote: <b style="color:${colorOf(win)}">${esc(nm(win))} +${fInt(Math.abs(net))}</b>.</p>
+      <div style="overflow-x:auto"><table><thead><tr><th>Estado</th><th>Votos novos</th><th>Urnas</th><th>${esc(nm(a))}</th><th>${esc(nm(b))}</th><th>Saldo</th></tr></thead><tbody>
+      ${E.rows.slice(0,10).map(r => { const d = r.dv[a] - r.dv[b], w = d >= 0 ? a : b;
+        return `<tr><td><span class="sh" style="width:${Math.max(4, 70 * r.tot / max)}px;background:${colorOf(w)}"></span>${UF[r.uf]}</td><td>${fInt(r.tot)}</td><td>+${r.dp.toLocaleString("pt-BR",{maximumFractionDigits:2})} pts</td>
+          <td>+${fInt(r.dv[a])}</td><td>+${fInt(r.dv[b])}</td><td style="color:${colorOf(w)};font-weight:700">${esc(nm(w))} ${sgn(Math.abs(d))}</td></tr>`; }).join("")}
+      </tbody></table></div>
+      ${E.rows.length > 10 ? `<p class="sum" style="margin-top:.4rem">+ ${E.rows.length - 10} estados com menos votos novos.</p>` : ""}
+      ${flow.log.length > 1 ? `<details><summary>Atualizações anteriores (${flow.log.length - 1})</summary><ul>${flow.log.slice(1).map(line).join("")}</ul></details>` : ""}`;
   }
 
   function drawChart(P){
