@@ -188,6 +188,14 @@ body.lead-lula .cd .clock,body.lead-flavio .cd .clock{color:var(--acc2)}
 .cmp th:first-child,.cmp td:first-child{text-align:left}
 .cmp thead th{color:var(--muted);font-weight:400;border-top:0;vertical-align:bottom;white-space:normal}
 .cmp .low{color:var(--muted);font-style:italic}
+#rp{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);z-index:30;width:min(760px,calc(100% - 24px));display:none;gap:.5rem .75rem;align-items:center;flex-wrap:wrap;
+  padding:.7rem .9rem;border-radius:.8rem;background:var(--panel);border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+body.replay #rp{display:flex}
+#rp input[type=range]{flex:1 1 14rem;accent-color:var(--focus)}
+#rp .lbl{font-variant-numeric:tabular-nums;font-size:.9rem;min-width:14rem}
+#rp select,#rp button{font:inherit}
+body.replay .wrap{padding-bottom:7rem}
+body.replay #conn{opacity:.5}
 #uf-detail{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line)}
 #uf-detail[hidden]{display:none}
 .table-wrap{overflow-x:auto;margin-top:1.5rem}
@@ -227,6 +235,7 @@ footer a{color:inherit}
         <option value="120">A cada 2 min</option>
       </select>
       <button id="now" type="button">Atualizar agora</button>
+      <button id="rp-open" type="button">▶ Replay</button>
     </div>
   </header>
 
@@ -333,6 +342,15 @@ footer a{color:inherit}
   </footer>
 </div>
 <div id="tip" hidden></div>
+<div id="rp" role="region" aria-label="Replay da apuração">
+  <button type="button" id="rp-play">⏸</button>
+  <label class="sr" for="rp-speed">Velocidade</label>
+  <select id="rp-speed"><option>1</option><option>5</option><option>10</option><option selected>25</option><option>50</option><option>100</option><option>200</option></select><span>x</span>
+  <input type="range" id="rp-bar" min="0" max="1000" value="0" aria-label="Posição do replay">
+  <span class="lbl" id="rp-lbl">–</span>
+  <span id="rp-est" hidden style="flex-basis:100%;font-size:.8rem;color:var(--warn)">⚠ Reconstrução aproximada: o placar do Brasil segue as parciais publicadas (InfoMoney e leituras deste painel); o andamento de cada estado é estimado entre poucos retratos conhecidos. Não é registro oficial.</span>
+  <button type="button" id="rp-exit">Sair do replay</button>
+</div>
 <canvas id="fx" aria-hidden="true"></canvas>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="meltf"><feTurbulence type="fractalNoise" baseFrequency="0.01 0.006" numOctaves="2" seed="3"/><feDisplacementMap id="meltd" in="SourceGraphic" scale="0" yChannelSelector="G" xChannelSelector="R"/></filter></svg>
 <p class="sr" aria-live="polite" id="live"></p>
@@ -437,7 +455,7 @@ footer a{color:inherit}
         try { const r = await fetch(URL1(uf)); if (r.ok){ const d = parse(await r.json()); t1[uf] = { v: Object.fromEntries(d.cands.map(c => [c.n, c.v])), p: Object.fromEntries(d.cands.map(c => [c.n, c.p])), tot: d.cands.reduce((s,c) => s + c.v, 0) }; } } catch {} } }));
       if (Object.keys(t1).length > 20) state.t1 = t1;
     }
-    trackFlow();
+    trackFlow(); recordFrame();
     render(); renderTrend(); renderDerby(); renderFlow();
     if (state.sel) loadMunRes(state.sel);
     schedule();
@@ -695,7 +713,7 @@ footer a{color:inherit}
     if (!last || P.pst > last.pst){
       const pa = 100 * P.cnt[a] / P.brTot;
       hist.push({ pst: P.pst, lead: a, m: +(pa - (100 - pa)).toFixed(3), proj: +(base[0].p - base[1].p).toFixed(3) });
-      try { localStorage.setItem(HKEY, JSON.stringify(hist)); } catch {}
+      if (!state.replay) try { localStorage.setItem(HKEY, JSON.stringify(hist)); } catch {}
     }
     drawChart(P);
   }
@@ -807,6 +825,7 @@ footer a{color:inherit}
     return o;
   }
   function trackFlow(){
+    if (state.replay) return;
     const br = state.br && state.br !== "wait" ? state.br : null; if (!br) return;
     const now = snapNow(), old = flow.snap, ids = br.cands.slice(0,2).map(c => c.n);
     if (old){
@@ -846,6 +865,66 @@ footer a{color:inherit}
       ${E.rows.length > 10 ? `<p class="sum" style="margin-top:.4rem">+ ${E.rows.length - 10} estados com menos votos novos.</p>` : ""}
       ${flow.log.length > 1 ? `<details><summary>Atualizações anteriores (${flow.log.length - 1})</summary><ul>${flow.log.slice(1).map(line).join("")}</ul></details>` : ""}`;
   }
+
+  // ---- Replay: retratos por UF gravados (arquivo do repositório + gravação local deste navegador) ----
+  const RKEY = "apur-2t-6258-rec";
+  const tOf = w => { const m = /(\d+)\/(\d+)\/(\d+)\s+(\d+):(\d+):(\d+)/.exec(w || ""); return m ? new Date(+m[3], m[2]-1, +m[1], +m[4], +m[5], +m[6]).getTime() : 0; };
+  function recordFrame(){
+    const br = state.br && state.br !== "wait" ? state.br : null; if (!br || state.replay || DEMO) return;
+    let rec = []; try { rec = JSON.parse(localStorage.getItem(RKEY)) || []; } catch {}
+    const k = br.when + "|" + br.pst; if (rec.length && rec[rec.length - 1].k === k) return;
+    const d = { br: { pst: br.pst, c: Object.fromEntries(br.cands.map(c => [c.n, c.v])) } };
+    UFS.forEach(uf => { const x = ufData(uf); if (x) d[uf] = { pst: x.pst, c: Object.fromEntries(x.cands.map(c => [c.n, c.v])) }; });
+    rec.push({ k, t: br.when, d }); rec = rec.slice(-700);
+    try { localStorage.setItem(RKEY, JSON.stringify(rec)); } catch {}
+  }
+  const RP = { frames:[], i:-1, clock:0, playing:true, raf:0, last:0 };
+  async function openReplay(){
+    const get = async p => { try { return await fetch(p, { cache:"no-cache" }).then(r => r.ok ? r.json() : []); } catch { return []; } };
+    const fr = [...await get("rec/estimativa.json"), ...await get("rec/frames.json")];
+    let loc = []; try { loc = JSON.parse(localStorage.getItem(RKEY)) || []; } catch {}
+    const seen = new Set(), all = [...fr, ...loc].map(f => ({ ...f, ms: tOf(f.t) })).filter(f => f.ms && f.d?.br)
+      .sort((a,b) => a.ms - b.ms || num(a.d.br.pst) - num(b.d.br.pst)).filter(f => { const key = f.t + num(f.d.br.pst); if (seen.has(key)) return false; seen.add(key); return true; });
+    if (all.length < 2){ alert("Ainda não há gravação suficiente para o replay. Deixe a página aberta durante a apuração."); return; }
+    RP.frames = all; RP.names = new Map((state.br?.cands || []).map(c => [c.n, c]));
+    state.replay = true; clearInterval(state.timer); $("next").textContent = "";
+    document.body.classList.add("replay"); setConn("warn", "Modo replay");
+    RP.clock = all[0].ms; RP.i = -1; RP.playing = true; $("rp-play").textContent = "⏸";
+    hist = []; state.winSaid = false;
+    RP.last = performance.now(); cancelAnimationFrame(RP.raf); RP.raf = requestAnimationFrame(tickReplay);
+  }
+  function frameData(x){
+    const c = Object.entries(x.c).map(([n, v]) => ({ n, v: int(v) })), tot = c.reduce((s,y) => s + y.v, 0);
+    const cands = c.map(y => { const o = RP.names.get(y.n) || { nm: "Candidato " + y.n, pt: "" };
+      return { ...o, n: y.n, v: y.v, p: tot ? 100 * y.v / tot : 0, el: false, t2: false }; }).sort((a,b) => b.v - a.v);
+    return { cands, pst: num(x.pst), c:0, pc:0, a:0, pa:0, vb:0, pvb:0, vn:0, pvn:0, final:false };
+  }
+  function showFrame(i){
+    if (i === RP.i) return; RP.i = i;
+    const f = RP.frames[i];
+    state.br = { ...frameData(f.d.br), when: f.t };
+    UFS.forEach(uf => state.uf[uf] = f.d[uf] ? frameData(f.d[uf]) : "wait");
+    render(); renderTrend(); renderDerby();
+  }
+  function tickReplay(now){
+    if (!state.replay) return;
+    const F = RP.frames, first = F[0].ms, end = F[F.length - 1].ms;
+    if (RP.playing){ RP.clock = Math.min(end, RP.clock + (now - RP.last) * +$("rp-speed").value); if (RP.clock >= end) { RP.playing = false; $("rp-play").textContent = "▶"; } }
+    RP.last = now;
+    let i = 0; while (i + 1 < F.length && F[i + 1].ms <= RP.clock) i++;
+    showFrame(i);
+    $("rp-bar").value = end > first ? Math.round(1000 * (RP.clock - first) / (end - first)) : 1000;
+    $("rp-lbl").textContent = `${new Date(RP.clock).toLocaleTimeString("pt-BR")} · ${fPct(state.br.pst)} apurado`;
+    $("rp-est").hidden = !F[i].est;
+    RP.raf = requestAnimationFrame(tickReplay);
+  }
+  $("rp-open").addEventListener("click", openReplay);
+  $("rp-play").addEventListener("click", () => {
+    const F = RP.frames; if (!RP.playing && RP.clock >= F[F.length - 1].ms) RP.clock = F[0].ms;
+    RP.playing = !RP.playing; $("rp-play").textContent = RP.playing ? "⏸" : "▶";
+  });
+  $("rp-bar").addEventListener("input", e => { const F = RP.frames, a = F[0].ms, b = F[F.length - 1].ms; RP.clock = a + (b - a) * e.target.value / 1000; });
+  $("rp-exit").addEventListener("click", () => location.reload());
 
   function drawChart(P){
     const svg = $("trend-chart"), W = 600, H = 180, L = 36, R = 10, T = 10, B = 24;
@@ -947,6 +1026,7 @@ footer a{color:inherit}
   }
 
   async function loadMunRes(uf){
+    if (state.replay) return;
     const M = state.mun[uf]; if (!M?.list) return;
     const q = [...M.list], tok = ++state.munTok, total = q.length; let done = 0, last = 0;
     await Promise.all(Array.from({length:8}, async () => {
